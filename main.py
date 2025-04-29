@@ -37,7 +37,7 @@ def categorize_with_probabilities(model, tokenizer, recipient, booking_text, pur
 def process_csv(file_path):
     categorized_transactions = []
 
-    with open(file_path, mode="r", encoding="utf-8") as file:
+    with open(file_path, mode="r", encoding="latin1") as file:  # Changed encoding to 'latin1'
         reader = csv.DictReader(file, delimiter=";")
         for row in reader:
             recipient = row["Auftraggeber/Empfänger"]
@@ -52,6 +52,8 @@ def process_csv(file_path):
         recipient, booking_text, purpose, category, probabilities = entry
         print(f"{recipient} | {booking_text} | {purpose} -> {category} | Probability: {probabilities}")
 
+
+
 if __name__ == "__main__":
     
     # Possible categories (must match exactly with LLM responses!)
@@ -60,9 +62,23 @@ if __name__ == "__main__":
         "Kleidung & Körperpflege", "Überschuss", "Versicherung", "Wohnen", "Sonstiges", "unsicher"
     ]
 
+    # model_name = "microsoft/phi-4"
+    # small model
+    # model_name = "microsoft/Phi-4-mini-instruct"
+    # Qwen2.5-3B-Ins
+    # model_name = "Qwen/Qwen2.5-3B-Instruct"
+    # model_name = "google-t5/t5-small"
+    model_name = "unsloth/phi-4-unsloth-bnb-4bit"
+
+
+
+
     # Initialize the tokenizer and model
-    tokenizer = AutoTokenizer.from_pretrained("microsoft/phi-4")
-    model = AutoModelForCausalLM.from_pretrained("microsoft/phi-4")
+    # tokenizer = AutoTokenizer.from_pretrained("microsoft/phi-4")
+    # model = AutoModelForCausalLM.from_pretrained("microsoft/phi-4")
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForCausalLM.from_pretrained(model_name)
+
 
     # System prompt for categorization
     SYSTEM_PROMPT = """You receive the sender/recipient, booking text, and purpose of an account. 
