@@ -43,6 +43,9 @@ a = Analysis(
         'altair',
         'pyarrow',
         'pyarrow.parquet',
+        'plotly',
+        'plotly.graph_objects',
+        'plotly.graph_objs',
         # Date/time handling
         'dateutil',
         'dateutil.parser',

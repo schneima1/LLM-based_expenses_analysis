@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 import tempfile
 import ollama
+import plotly.graph_objects as go
 
 # PDF processing libraries
 try:
@@ -52,33 +53,43 @@ DEFAULT_CATEGORIES = [
     "Mobilität",
     "Kleidung & Körperpflege",
     "Überschuss",
+    "Erstattung",
     "Versicherung",
     "Wohnen",
     "Sonstiges"
 ]
 
-SYSTEM_PROMPT = """In meiner nächsten Nachricht werde ich dir Auftraggeber/Empfänger, Buchungstext, Verwendungszweck eines Kontos geben. 
-Deine Aufgabe ist es, die Ausgabe einer der folgenden Kategorien zuzuordnen:
+SYSTEM_PROMPT = """In meiner nächsten Nachricht werde ich dir Betrag, Auftraggeber/Empfänger, Buchungstext, Verwendungszweck einer Transaktion geben. 
+Deine Aufgabe ist es, die Transaktion einer der folgenden Kategorien zuzuordnen:
+
+**Für Ausgaben (negative Beträge):**
 - Freizeit & Lifestyle
 - Supermarkt
 - Essen unterwegs
 - Mobilität
 - Kleidung & Körperpflege
-- Überschuss
 - Versicherung
 - Wohnen
 - Sonstiges
 
-Mobilfunk gehört zu Sonstiges. 
-Amazon gehört zu Freizeit & Lifestyle. 
-Studierendenwerk gehört zu Essen unterwegs. 
-DB ist Deutsche Bahn und damit Mobilität. 
-Vodafone ist WLAN und damit Wohnen. 
-Alles mit Tesla oder EnBW ist Mobilität. 
-Rundfunkbeitrag ist bei Wohnen dabei. 
-Handyvertrag gehört zu Freizeit & Lifestyle.
+**Für Einnahmen (positive Beträge):**
+- Überschuss (für Gehalt, Lohn, Rente, etc.)
+- Erstattung (für Rückzahlungen, Gutschriften)
+- Sonstiges
 
-Wenn du dir nicht sicher bist, antworte mit 'unsicher'. Antworte nur mit der Kategorie, keine Begründung!"""
+**Wichtige Regeln:**
+- Positive Beträge sind EINNAHMEN (z.B. Gehalt → "Überschuss")
+- Negative Beträge sind AUSGABEN (z.B. Supermarkt → "Supermarkt")
+- Mobilfunk gehört zu Sonstiges
+- Amazon gehört zu Freizeit & Lifestyle
+- Studierendenwerk gehört zu Essen unterwegs
+- DB ist Deutsche Bahn und damit Mobilität
+- Vodafone ist WLAN und damit Wohnen
+- Alles mit Tesla oder EnBW ist Mobilität
+- Rundfunkbeitrag ist bei Wohnen dabei
+- Handyvertrag gehört zu Freizeit & Lifestyle
+
+Wenn du dir nicht sicher bist, antworte mit 'Sonstiges'. Antworte nur mit der Kategorie, keine Begründung!"""
 
 CONFIG_FILE = "config.json"
 
@@ -119,6 +130,25 @@ def save_config(config: Dict):
             json.dump(config, f, indent=2, ensure_ascii=False)
     except Exception as e:
         st.error(f"Could not save config: {e}")
+
+
+def check_ollama_available() -> Tuple[bool, str]:
+    """
+    Check if Ollama is installed and running.
+    
+    Returns:
+        Tuple of (is_available, error_message)
+    """
+    try:
+        # Try to list models - this will fail if Ollama is not installed or not running
+        ollama.list()
+        return True, ""
+    except Exception as e:
+        error_str = str(e).lower()
+        if "connection" in error_str or "refused" in error_str:
+            return False, "connection"
+        else:
+            return False, "not_installed"
 
 
 def get_available_ollama_models() -> List[str]:
@@ -300,6 +330,122 @@ def extract_table_from_pdf_pdfplumber(pdf_file) -> pd.DataFrame:
     return pd.DataFrame()
 
 
+def extract_table_from_pdf_pymupdf(pdf_file) -> pd.DataFrame:
+    """Extract tables from PDF using PyMuPDF (fitz)."""
+    try:
+        import fitz  # PyMuPDF
+        
+        # Save to temp file if needed
+        if hasattr(pdf_file, 'read'):
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
+                tmp.write(pdf_file.read())
+                tmp_path = tmp.name
+                pdf_file.seek(0)  # Reset for other methods
+        else:
+            tmp_path = pdf_file
+        
+        doc = fitz.open(tmp_path)
+        
+        # Try to find tables using text blocks
+        all_tables = []
+        
+        for page_num, page in enumerate(doc):
+            # Get text as a dict with position information
+            text_dict = page.get_text("dict")
+            blocks = text_dict.get("blocks", [])
+            
+            # Extract text lines with their positions
+            lines_with_pos = []
+            for block in blocks:
+                if "lines" in block:
+                    for line in block["lines"]:
+                        line_text = ""
+                        for span in line.get("spans", []):
+                            line_text += span.get("text", "")
+                        if line_text.strip():
+                            lines_with_pos.append({
+                                "text": line_text.strip(),
+                                "y": line["bbox"][1],  # y-coordinate
+                                "x": line["bbox"][0]   # x-coordinate
+                            })
+            
+            # Sort by vertical position (y-coordinate)
+            lines_with_pos.sort(key=lambda x: (round(x["y"] / 5) * 5, x["x"]))
+            
+            # Group lines that are at similar y-positions (same row)
+            rows = []
+            current_row = []
+            last_y = None
+            y_threshold = 10  # pixels tolerance
+            
+            for item in lines_with_pos:
+                if last_y is None or abs(item["y"] - last_y) < y_threshold:
+                    current_row.append(item)
+                    last_y = item["y"] if last_y is None else last_y
+                else:
+                    if current_row:
+                        # Sort by x-position and concatenate
+                        current_row.sort(key=lambda x: x["x"])
+                        row_text = [r["text"] for r in current_row]
+                        rows.append(row_text)
+                    current_row = [item]
+                    last_y = item["y"]
+            
+            # Add last row
+            if current_row:
+                current_row.sort(key=lambda x: x["x"])
+                row_text = [r["text"] for r in current_row]
+                rows.append(row_text)
+            
+            all_tables.extend(rows)
+        
+        doc.close()
+        
+        # Clean up temp file
+        if hasattr(pdf_file, 'read') and 'tmp_path' in locals():
+            Path(tmp_path).unlink(missing_ok=True)
+        
+        # Convert to DataFrame
+        if all_tables:
+            # Find the maximum number of columns
+            max_cols = max(len(row) for row in all_tables)
+            
+            # Pad rows to have the same number of columns
+            padded_rows = [row + [''] * (max_cols - len(row)) for row in all_tables]
+            
+            # Create DataFrame
+            df = pd.DataFrame(padded_rows)
+            
+            # Filter out header-like rows (rows that appear in first few lines and are repeated)
+            # Skip rows that are likely headers (all caps, short text, etc.)
+            if len(df) > 5:
+                # Try to identify data rows (rows with dates or amounts)
+                date_pattern = r'\d{1,2}[./]\d{1,2}[./]\d{2,4}'
+                amount_pattern = r'-?\d+[.,]\d{2}'
+                
+                def has_transaction_data(row):
+                    row_str = ' '.join(str(x) for x in row if pd.notna(x))
+                    return bool(re.search(date_pattern, row_str) or re.search(amount_pattern, row_str))
+                
+                data_mask = df.apply(has_transaction_data, axis=1)
+                if data_mask.any():
+                    # Find first data row
+                    first_data_idx = data_mask.idxmax()
+                    # Use previous row as header if it exists
+                    if first_data_idx > 0:
+                        df.columns = df.iloc[first_data_idx - 1].fillna('Unknown').astype(str)
+                        df = df.iloc[first_data_idx:].reset_index(drop=True)
+                    else:
+                        df = df[data_mask].reset_index(drop=True)
+            
+            return df
+        
+        return pd.DataFrame()
+    
+    except Exception as e:
+        return pd.DataFrame()
+
+
 def extract_text_with_ocr(pdf_file) -> str:
     """Extract text from scanned PDF using OCR."""
     if not OCR_AVAILABLE:
@@ -339,16 +485,27 @@ def pdf_to_dataframe(pdf_file, filename: str) -> Tuple[pd.DataFrame, str]:
         st.info("💡 **Tip**: Most banks let you download CSV files directly. CSVs work much better and are easier to process!")
         return df, method
     
-    # Try pdfplumber first
+    # Try pdfplumber first (best for structured tables)
     try:
         df = extract_table_from_pdf_pdfplumber(pdf_file)
         if not df.empty:
             method = "pdfplumber"
             return df, method
-    except Exception as e:
-        st.warning(f"Basic PDF extraction failed: {e}")
+    except Exception:
+        pass
     
-    # Try OCR as fallback
+    # Try PyMuPDF as second method (better for text extraction)
+    try:
+        pdf_file.seek(0)
+        df = extract_table_from_pdf_pymupdf(pdf_file)
+        if not df.empty:
+            method = "pymupdf"
+            st.info("📄 Extracted text from PDF - you may need to verify column mapping")
+            return df, method
+    except Exception:
+        pass
+    
+    # Try OCR as final fallback (for scanned PDFs)
     if OCR_AVAILABLE:
         try:
             pdf_file.seek(0)
@@ -360,13 +517,26 @@ def pdf_to_dataframe(pdf_file, filename: str) -> Tuple[pd.DataFrame, str]:
                 method = "ocr"
                 st.info("📝 Text extracted via OCR - you may need to reformat the data")
                 return df, method
-        except Exception as e:
-            st.warning(f"OCR extraction failed: {e}")
+        except Exception:
+            pass  # Silently fail, show final error message below
     
-    # If we get here, nothing worked
+    # If we get here, nothing worked - show helpful message
     if method == "none":
         st.error("❌ Could not extract data from PDF")
-        st.info("💡 **Alternative**: Download your bank statement as CSV instead - it's much more reliable!")
+        st.info("💡 **Best solution**: Most banks offer CSV export - use that instead! CSVs are faster, more reliable, and contain all the data you need.")
+        with st.expander("ℹ️ Why PDFs are problematic"):
+            st.markdown("""
+            - PDFs are designed for viewing, not data extraction
+            - Table structures vary widely between banks
+            - Scanned PDFs require OCR (not included in this build)
+            - CSV files contain the exact same data in a structured format
+            
+            **How to get CSV from your bank**:
+            1. Log into your online banking
+            2. Go to account statements
+            3. Look for "Export" or "Download" options
+            4. Choose CSV format (not PDF)
+            """)
     
     return df, method
 
@@ -632,7 +802,7 @@ def classify_batch_with_ollama(transactions_batch: List[Dict], system_prompt: st
     Classify multiple transactions in one Ollama request.
     
     Args:
-        transactions_batch: List of transaction dicts with 'account' and 'description'
+        transactions_batch: List of transaction dicts with 'account', 'description', and 'amount'
         system_prompt: System prompt for classification
         model: Ollama model name
     
@@ -640,14 +810,15 @@ def classify_batch_with_ollama(transactions_batch: List[Dict], system_prompt: st
         List of category names
     """
     try:
-        # Build a numbered list of transactions
+        # Build a numbered list of transactions with amount information
         transactions_text = "\n".join([
-            f"{i+1}. {t['account']}, {t['description']}"
+            f"{i+1}. Betrag: €{t['amount']:.2f}, Konto/Empfänger: {t['account']}, Beschreibung: {t['description']}"
             for i, t in enumerate(transactions_batch)
         ])
         
         # Prompt asking for numbered categories
         user_prompt = f"""Hier sind {len(transactions_batch)} Transaktionen. Gib für jede die Kategorie zurück.
+Wichtig: Positive Beträge sind Einnahmen, negative Beträge sind Ausgaben.
 
 {transactions_text}
 
@@ -693,7 +864,7 @@ Antworte im Format:
         return ["Sonstiges"] * len(transactions_batch)
 
 
-def classify_transactions(df: pd.DataFrame, system_prompt: str, model: str = "qwen3:4b-instruct-2507-q4_K_M", batch_size: int = 10) -> pd.DataFrame:
+def classify_transactions(df: pd.DataFrame, system_prompt: str, model: str = "qwen3:4b-instruct-2507-q4_K_M", batch_size: int = 10, exclude_internal: bool = True) -> pd.DataFrame:
     """
     Classify all transactions in DataFrame using Ollama with batch processing.
     
@@ -702,18 +873,24 @@ def classify_transactions(df: pd.DataFrame, system_prompt: str, model: str = "qw
         system_prompt: System prompt
         model: Ollama model
         batch_size: Number of transactions to classify in one request
+        exclude_internal: If True, exclude internal transfers from classification
     
     Returns:
         DataFrame with Category column filled
     """
     df = df.copy()
     
-    # Only classify non-internal transfers
-    to_classify_indices = df[~df['Internal_Transfer']].index.tolist()
+    # Only classify non-internal transfers if exclude_internal is True
+    if exclude_internal:
+        to_classify_indices = df[~df['Internal_Transfer']].index.tolist()
+    else:
+        to_classify_indices = df.index.tolist()
+    
     total = len(to_classify_indices)
     
     if total == 0:
-        df.loc[df['Internal_Transfer'], 'Category'] = 'Internal Transfer'
+        if exclude_internal:
+            df.loc[df['Internal_Transfer'], 'Category'] = 'Internal Transfer'
         return df
     
     progress_bar = st.progress(0)
@@ -737,7 +914,8 @@ def classify_transactions(df: pd.DataFrame, system_prompt: str, model: str = "qw
             row = df.loc[idx]
             batch_data.append({
                 'account': str(row['Account']),
-                'description': str(row['Description'])
+                'description': str(row['Description']),
+                'amount': float(row['Amount'])
             })
         
         # Classify the batch
@@ -759,8 +937,9 @@ def classify_transactions(df: pd.DataFrame, system_prompt: str, model: str = "qw
     progress_bar.empty()
     status_text.empty()
     
-    # Mark internal transfers
-    df.loc[df['Internal_Transfer'], 'Category'] = 'Internal Transfer'
+    # Mark internal transfers if they should be excluded
+    if exclude_internal:
+        df.loc[df['Internal_Transfer'], 'Category'] = 'Internal Transfer'
     
     return df
 
@@ -778,6 +957,68 @@ def main():
     
     st.title("💰 Bank Transaction Analyzer")
     st.markdown("*Fully local transaction processing and classification*")
+    
+    # Check if Ollama is available
+    ollama_available, error_type = check_ollama_available()
+    
+    if not ollama_available:
+        st.error("### ⚠️ Ollama is Required")
+        
+        if error_type == "connection":
+            st.warning("""
+            **Ollama is installed but not running.**
+            
+            Please start Ollama:
+            - **Windows**: Launch Ollama from the Start Menu or system tray
+            - **macOS**: Open Ollama from Applications
+            - **Linux**: Run `ollama serve` in a terminal
+            
+            After starting Ollama, refresh this page.
+            """)
+        else:
+            st.warning("""
+            **Ollama is not installed on your system.**
+            
+            This application uses Ollama to run AI models locally for transaction classification.
+            
+            **Why Ollama?**
+            - 🔒 **Complete Privacy**: All processing happens on your computer
+            - 🚀 **Fast**: No internet required after setup
+            - 🆓 **Free & Open Source**: No API costs or subscriptions
+            
+            **Installation is quick and easy (takes ~5 minutes):**
+            """)
+            
+            col1, col2, col3 = st.columns([1, 1, 1])
+            
+            with col1:
+                st.markdown("#### Windows")
+                if st.button("📥 Download for Windows", use_container_width=True):
+                    st.link_button("Go to Download", "https://ollama.com/download/windows", use_container_width=True)
+                st.caption("Download and run the installer")
+            
+            with col2:
+                st.markdown("#### macOS")
+                if st.button("📥 Download for macOS", use_container_width=True):
+                    st.link_button("Go to Download", "https://ollama.com/download/mac", use_container_width=True)
+                st.caption("Download and open the DMG")
+            
+            with col3:
+                st.markdown("#### Linux")
+                st.code("curl -fsSL https://ollama.com/install.sh | sh", language="bash")
+                st.caption("Run this command in terminal")
+            
+            st.info("""
+            **After installing Ollama:**
+            1. Ollama will start automatically
+            2. Refresh this application
+            3. The app will download a small AI model (~3GB) on first use
+            4. Start analyzing your transactions!
+            
+            Need help? Visit [ollama.com](https://ollama.com) for detailed instructions.
+            """)
+        
+        st.stop()  # Don't show the rest of the app if Ollama is not available
     
     # Initialize session state
     if 'processed_data' not in st.session_state:
@@ -801,8 +1042,8 @@ def main():
         st.markdown("🔗 [Browse Models](https://ollama.com/library) on Ollama website")
         
         available_models = [
-            "qwen3:4b-instruct-2507-q4_K_M",
             "gemma3:4b",
+            "qwen3:4b-instruct-2507-q4_K_M",
             "llama3.2:3b",
         ]
         
@@ -900,10 +1141,12 @@ def main():
                     if file.name.lower().endswith('.pdf'):
                         # Process PDF
                         df, method = pdf_to_dataframe(file, file.name)
-                        st.info(f"Extracted using: {method}")
                         
+                        # Only show success message if extraction worked
+                        if not df.empty:
+                            st.success(f"✓ Extracted using: {method}")
+                        # Error messages already shown in pdf_to_dataframe function
                         if df.empty:
-                            st.error("Could not extract data from PDF")
                             continue
                     else:
                         # Process CSV
@@ -999,7 +1242,29 @@ def main():
                 st.dataframe(merged_df)
                 
                 # Detect internal transfers
-                st.header("Internal Transfer Detection")
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.header("Internal Transfer Detection")
+                with col2:
+                    with st.expander("ℹ️"):
+                        st.markdown("""
+                        **What are internal transfers?**
+                        
+                        Money movements between your own accounts that don't affect your overall balance.
+                        
+                        **How it works:**
+                        1. Finds matching opposite amounts (e.g., -500€ and +500€)
+                        2. Checks if dates are within 2 days
+                        3. Looks for your name in transaction details
+                        4. Excludes investment transactions (ETF, stocks)
+                        
+                        **Why detect them?**
+                        - Prevents double-counting in expense analysis
+                        - Shows accurate spending patterns
+                        - These are marked but NOT deleted
+                        
+                        **Note:** You can review and confirm before they're excluded from classification.
+                        """)
                 
                 if st.button("🔍 Detect Internal Transfers"):
                     with st.spinner("Detecting internal transfers..."):
@@ -1011,7 +1276,31 @@ def main():
                         st.session_state.processed_data = merged_df
                     
                     internal_count = merged_df['Internal_Transfer'].sum()
-                    st.success(f"Found {internal_count} internal transfers")
+                    st.success(f"✓ Found {internal_count} internal transfers")
+                    
+                    if internal_count > 0:
+                        st.info("""
+                        💡 **Next step:** Review the highlighted transactions below. 
+                        When you classify transactions, internal transfers will be:
+                        - **Highlighted in pink** for easy identification
+                        - **Automatically excluded** from AI classification
+                        - **Marked as "Internal Transfer"** in the Category column
+                        - **Included in the export** (so you have a complete record)
+                        
+                        Check the box below to confirm you want to exclude them from classification.
+                        """)
+                
+                # Show confirmation if internal transfers were detected
+                exclude_internal = True  # Default to excluding internal transfers
+                if st.session_state.processed_data is not None and st.session_state.processed_data['Internal_Transfer'].sum() > 0:
+                    exclude_internal = st.checkbox(
+                        "Exclude internal transfers from classification (recommended)",
+                        value=True,
+                        help="Internal transfers will be marked but not sent to AI for classification. They'll still appear in your export."
+                    )
+                    
+                    if not exclude_internal:
+                        st.warning("⚠️ Warning: If you don't exclude internal transfers, they'll be classified as regular transactions, which may skew your expense analysis.")
                 
                 # Classify transactions
                 st.header("Transaction Classification")
@@ -1047,7 +1336,8 @@ def main():
                                 st.session_state.processed_data,
                                 system_prompt=system_prompt,
                                 model=model,
-                                batch_size=batch_size
+                                batch_size=batch_size,
+                                exclude_internal=exclude_internal
                             )
                             st.session_state.processed_data = classified_df
                         
@@ -1060,13 +1350,20 @@ def main():
                 if st.session_state.processed_data is not None:
                     st.subheader("Processed Transactions")
                     
-                    # Highlight internal transfers with light pink background
+                    # Highlight internal transfers with light pink background and style the checkbox
                     def highlight_internal(row):
                         if row['Internal_Transfer']:
                             return ['background-color: #ffcccc; color: #000000'] * len(row)
                         return [''] * len(row)
                     
-                    styled_df = st.session_state.processed_data.style.apply(highlight_internal, axis=1)
+                    # Create a copy for display with better boolean formatting
+                    display_df = st.session_state.processed_data.copy()
+                    # Replace True/False with more visible symbols
+                    display_df['Internal_Transfer'] = display_df['Internal_Transfer'].apply(
+                        lambda x: '✓ Yes' if x else 'No'
+                    )
+                    
+                    styled_df = display_df.style.apply(highlight_internal, axis=1)
                     st.dataframe(styled_df)
                     
                     # Export button
@@ -1080,6 +1377,62 @@ def main():
                         file_name=f"transactions_unified_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                         mime="text/csv"
                     )
+                    
+                    # Quick Analysis Summary
+                    st.divider()
+                    st.subheader("📊 Quick Analysis Summary")
+                    
+                    df = st.session_state.processed_data
+                    analysis_df = df[~df['Internal_Transfer']].copy()
+                    
+                    if not analysis_df.empty:
+                        # Key metrics in columns
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            total_income = analysis_df[analysis_df['Amount'] > 0]['Amount'].sum()
+                            st.metric("💰 Total Income", f"€{total_income:,.2f}")
+                        
+                        with col2:
+                            total_expenses = abs(analysis_df[analysis_df['Amount'] < 0]['Amount'].sum())
+                            st.metric("💸 Total Expenses", f"€{total_expenses:,.2f}")
+                        
+                        with col3:
+                            net = total_income - total_expenses
+                            delta_color = "normal" if net >= 0 else "inverse"
+                            st.metric("📈 Net", f"€{net:,.2f}")
+                        
+                        with col4:
+                            total_transactions = len(analysis_df)
+                            internal_count = df['Internal_Transfer'].sum()
+                            st.metric("📝 Transactions", f"{total_transactions}", 
+                                     delta=f"{internal_count} internal excluded")
+                        
+                        # Top categories preview
+                        st.markdown("#### Top Expense Categories")
+                        expense_df = analysis_df[analysis_df['Amount'] < 0].copy()
+                        if not expense_df.empty:
+                            expense_df['Amount'] = abs(expense_df['Amount'])
+                            top_expenses = expense_df.groupby('Category')['Amount'].sum().sort_values(ascending=False).head(5)
+                            
+                            col1, col2 = st.columns([2, 1])
+                            with col1:
+                                for category, amount in top_expenses.items():
+                                    st.progress(amount / top_expenses.max(), text=f"{category}: €{amount:,.2f}")
+                            
+                            with col2:
+                                st.info(f"""
+                                **For detailed analysis:**
+                                - Pie charts
+                                - Sankey diagram
+                                - Category breakdowns
+                                
+                                👉 Check the **Analysis** tab above
+                                """)
+                        else:
+                            st.info("No expenses found in the data")
+                    else:
+                        st.info("No transactions to analyze (all are internal transfers)")
     
     with tab2:
         st.header("📊 Analysis & Visualization")
@@ -1090,6 +1443,7 @@ def main():
             # Filter out internal transfers for analysis
             analysis_df = df[~df['Internal_Transfer']].copy()
             
+            # Key metrics
             col1, col2, col3 = st.columns(3)
             
             with col1:
@@ -1104,8 +1458,116 @@ def main():
                 net = total_income - total_expenses
                 st.metric("Net", f"€{net:,.2f}")
             
-            # Category breakdown
-            st.subheader("Expenses by Category")
+            # Pie Charts for Income and Expenses
+            st.subheader("💰 Income vs Expenses Breakdown")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("### Income Sources")
+                income_df = analysis_df[analysis_df['Amount'] > 0].copy()
+                if not income_df.empty:
+                    income_by_category = income_df.groupby('Category')['Amount'].sum()
+                    fig_income = {
+                        'data': [{
+                            'labels': income_by_category.index.tolist(),
+                            'values': income_by_category.values.tolist(),
+                            'type': 'pie',
+                            'marker': {'colors': ['#2ecc71', '#27ae60', '#16a085', '#1abc9c', '#3498db', '#2980b9']},
+                            'textinfo': 'label+percent',
+                            'hovertemplate': '<b>%{label}</b><br>€%{value:,.2f}<br>%{percent}<extra></extra>'
+                        }],
+                        'layout': {
+                            'showlegend': True,
+                            'height': 400,
+                            'margin': {'t': 20, 'b': 20, 'l': 20, 'r': 20}
+                        }
+                    }
+                    st.plotly_chart(fig_income, use_container_width=True)
+                else:
+                    st.info("No income transactions found")
+            
+            with col2:
+                st.markdown("### Expense Categories")
+                expense_df = analysis_df[analysis_df['Amount'] < 0].copy()
+                if not expense_df.empty:
+                    expense_df['Amount'] = abs(expense_df['Amount'])
+                    expense_by_category = expense_df.groupby('Category')['Amount'].sum()
+                    fig_expense = {
+                        'data': [{
+                            'labels': expense_by_category.index.tolist(),
+                            'values': expense_by_category.values.tolist(),
+                            'type': 'pie',
+                            'marker': {'colors': ['#e74c3c', '#c0392b', '#e67e22', '#d35400', '#f39c12', '#f1c40f', '#9b59b6', '#8e44ad']},
+                            'textinfo': 'label+percent',
+                            'hovertemplate': '<b>%{label}</b><br>€%{value:,.2f}<br>%{percent}<extra></extra>'
+                        }],
+                        'layout': {
+                            'showlegend': True,
+                            'height': 400,
+                            'margin': {'t': 20, 'b': 20, 'l': 20, 'r': 20}
+                        }
+                    }
+                    st.plotly_chart(fig_expense, use_container_width=True)
+                else:
+                    st.info("No expense transactions found")
+            
+            # Sankey Diagram
+            st.subheader("🔀 Money Flow (Sankey Diagram)")
+            st.markdown("*Visualizes how money flows from sources (accounts) to categories*")
+            
+            if not analysis_df.empty:
+                # Prepare data for Sankey
+                # Sources are accounts/recipients, targets are categories
+                sankey_df = analysis_df[['Account', 'Category', 'Amount']].copy()
+                sankey_df['Amount'] = abs(sankey_df['Amount'])
+                
+                # Group by source and target
+                flow_data = sankey_df.groupby(['Account', 'Category'])['Amount'].sum().reset_index()
+                flow_data = flow_data[flow_data['Amount'] > 0].sort_values('Amount', ascending=False).head(50)  # Top 50 flows
+                
+                if not flow_data.empty:
+                    # Create unique labels
+                    sources = flow_data['Account'].unique().tolist()
+                    targets = flow_data['Category'].unique().tolist()
+                    all_labels = sources + targets
+                    
+                    # Map to indices
+                    label_to_index = {label: idx for idx, label in enumerate(all_labels)}
+                    
+                    source_indices = [label_to_index[src] for src in flow_data['Account']]
+                    target_indices = [label_to_index[tgt] for tgt in flow_data['Category']]
+                    values = flow_data['Amount'].tolist()
+                    
+                    # Create Sankey
+                    fig_sankey = {
+                        'data': [{
+                            'type': 'sankey',
+                            'node': {
+                                'label': all_labels,
+                                'color': ['#3498db'] * len(sources) + ['#e74c3c'] * len(targets),
+                                'pad': 15,
+                                'thickness': 20
+                            },
+                            'link': {
+                                'source': source_indices,
+                                'target': target_indices,
+                                'value': values,
+                                'color': 'rgba(0,0,0,0.2)'
+                            }
+                        }],
+                        'layout': {
+                            'height': 600,
+                            'font': {'size': 10},
+                            'margin': {'t': 20, 'b': 20, 'l': 20, 'r': 20}
+                        }
+                    }
+                    st.plotly_chart(fig_sankey, use_container_width=True)
+                else:
+                    st.info("Not enough data for Sankey diagram")
+            
+            # Category breakdown table and bar chart
+            st.subheader("📊 Detailed Expense Breakdown")
             
             expense_df = analysis_df[analysis_df['Amount'] < 0].copy()
             expense_df['Amount'] = abs(expense_df['Amount'])
@@ -1122,7 +1584,7 @@ def main():
                     st.dataframe(category_summary.reset_index())
             
             # Timeline
-            st.subheader("Transaction Timeline")
+            st.subheader("📈 Transaction Timeline")
             
             if 'Date' in analysis_df.columns:
                 timeline_df = analysis_df.copy()
