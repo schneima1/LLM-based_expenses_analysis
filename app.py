@@ -121,6 +121,48 @@ def save_config(config: Dict):
         st.error(f"Could not save config: {e}")
 
 
+def get_available_ollama_models() -> List[str]:
+    """Get list of models currently available in Ollama."""
+    try:
+        response = ollama.list()
+        # Handle both dict and object response formats
+        if hasattr(response, 'models'):
+            models = response.models
+        elif isinstance(response, dict):
+            models = response.get('models', [])
+        else:
+            models = []
+        
+        # Extract model names
+        model_names = []
+        for model in models:
+            # Try 'model' attribute first (ollama._types.Model object)
+            if hasattr(model, 'model'):
+                model_names.append(model.model)
+            # Then try 'name' attribute
+            elif hasattr(model, 'name'):
+                model_names.append(model.name)
+            # Finally try dict access
+            elif isinstance(model, dict):
+                model_names.append(model.get('model', model.get('name', '')))
+        
+        return [name for name in model_names if name]
+    except Exception as e:
+        st.warning(f"Could not fetch Ollama models: {e}")
+        return []
+
+
+def format_model_option(model_name: str, available_models: List[str]) -> str:
+    """Format model name with availability indicator."""
+    # Check if any available model starts with the model_name (handles tags)
+    is_available = any(available.startswith(model_name.split(':')[0]) for available in available_models)
+    
+    if is_available:
+        return f"{model_name} ✓"
+    else:
+        return f"{model_name} (not downloaded)"
+
+
 def detect_encoding(file_bytes: bytes) -> str:
     """Detect file encoding. Try common encodings, prioritize German-compatible ones."""
     # Try encodings in order of likelihood for German text
@@ -291,15 +333,20 @@ def pdf_to_dataframe(pdf_file, filename: str) -> Tuple[pd.DataFrame, str]:
     df = pd.DataFrame()
     method = "none"
     
+    # Check if PDF support is available
+    if not PDF_PLUMBER_AVAILABLE:
+        st.error("📄 PDF support not available in this build.")
+        st.info("💡 **Tip**: Most banks let you download CSV files directly. CSVs work much better and are easier to process!")
+        return df, method
+    
     # Try pdfplumber first
-    if PDF_PLUMBER_AVAILABLE:
-        try:
-            df = extract_table_from_pdf_pdfplumber(pdf_file)
-            if not df.empty:
-                method = "pdfplumber"
-                return df, method
-        except Exception as e:
-            st.warning(f"pdfplumber failed: {e}")
+    try:
+        df = extract_table_from_pdf_pdfplumber(pdf_file)
+        if not df.empty:
+            method = "pdfplumber"
+            return df, method
+    except Exception as e:
+        st.warning(f"Basic PDF extraction failed: {e}")
     
     # Try OCR as fallback
     if OCR_AVAILABLE:
@@ -311,9 +358,15 @@ def pdf_to_dataframe(pdf_file, filename: str) -> Tuple[pd.DataFrame, str]:
                 lines = [line.strip() for line in text.split('\n') if line.strip()]
                 df = pd.DataFrame({'Extracted_Text': lines})
                 method = "ocr"
+                st.info("📝 Text extracted via OCR - you may need to reformat the data")
                 return df, method
         except Exception as e:
-            st.warning(f"OCR failed: {e}")
+            st.warning(f"OCR extraction failed: {e}")
+    
+    # If we get here, nothing worked
+    if method == "none":
+        st.error("❌ Could not extract data from PDF")
+        st.info("💡 **Alternative**: Download your bank statement as CSV instead - it's much more reliable!")
     
     return df, method
 
@@ -670,6 +723,11 @@ def classify_transactions(df: pd.DataFrame, system_prompt: str, model: str = "qw
     completed = 0
     
     for batch_start in range(0, total, batch_size):
+        # Check for cancellation
+        if st.session_state.get('cancel_classification', False):
+            status_text.text("❌ Classification cancelled")
+            break
+        
         batch_end = min(batch_start + batch_size, total)
         batch_indices = to_classify_indices[batch_start:batch_end]
         
@@ -740,8 +798,68 @@ def main():
         
         # Ollama model selection
         st.subheader("Ollama Settings")
-        model = "qwen3:4b-instruct-2507-q4_K_M"
-        st.text(f"Model: {model}")
+        st.markdown("🔗 [Browse Models](https://ollama.com/library) on Ollama website")
+        
+        available_models = [
+            "qwen3:4b-instruct-2507-q4_K_M",
+            "gemma3:4b",
+            "llama3.2:3b",
+        ]
+        
+        # Get list of downloaded models
+        downloaded_models = get_available_ollama_models()
+        
+        # Format model options with availability indicator
+        model_options = [format_model_option(m, downloaded_models) for m in available_models]
+        
+        # Get saved model or use default
+        default_model = st.session_state.config.get('ollama_model', available_models[0])
+        if default_model not in available_models:
+            default_model = available_models[0]
+        
+        selected_option = st.selectbox(
+            "Select Model",
+            options=model_options,
+            index=available_models.index(default_model),
+            help="Choose the Ollama model for transaction classification. ✓ = downloaded and ready. Models marked '(not downloaded)' need to be pulled first."
+        )
+        
+        # Extract actual model name from the formatted option
+        model = available_models[model_options.index(selected_option)]
+        st.session_state.config['ollama_model'] = model
+        
+        # Auto-download model if not available
+        if "(not downloaded)" in selected_option:
+            # Check if we're already downloading this model
+            if f'downloading_{model}' not in st.session_state:
+                st.session_state[f'downloading_{model}'] = False
+            
+            if not st.session_state[f'downloading_{model}']:
+                st.warning(f"⚠️ Model `{model}` not found. Click to download:")
+                if st.button(f"📥 Pull {model}", key=f"pull_{model}"):
+                    st.session_state[f'downloading_{model}'] = True
+                    st.rerun()
+            else:
+                # Currently downloading
+                with st.spinner(f"Downloading {model}... This may take several minutes."):
+                    try:
+                        # Stream the pull progress
+                        progress_placeholder = st.empty()
+                        for progress in ollama.pull(model, stream=True):
+                            if 'status' in progress:
+                                status = progress['status']
+                                if 'completed' in progress and 'total' in progress:
+                                    pct = (progress['completed'] / progress['total']) * 100
+                                    progress_placeholder.text(f"{status}: {pct:.1f}%")
+                                else:
+                                    progress_placeholder.text(status)
+                        
+                        st.session_state[f'downloading_{model}'] = False
+                        st.success(f"✓ Successfully downloaded {model}")
+                        st.rerun()
+                    except Exception as e:
+                        st.session_state[f'downloading_{model}'] = False
+                        st.error(f"Failed to download: {e}")
         
         # System prompt
         st.subheader("System Prompt")
@@ -898,7 +1016,7 @@ def main():
                 # Classify transactions
                 st.header("Transaction Classification")
                 
-                col1, col2 = st.columns([3, 2])
+                col1, col2, col3 = st.columns([2, 2, 1])
                 
                 with col1:
                     batch_size = st.slider(
@@ -912,10 +1030,18 @@ def main():
                 with col2:
                     classify_button = st.button("🤖 Classify with Ollama", use_container_width=True)
                 
+                with col3:
+                    if st.button("❌ Cancel", use_container_width=True):
+                        st.session_state.cancel_classification = True
+                        st.warning("Cancelling...")
+                
                 if classify_button:
                     if st.session_state.processed_data is None:
                         st.warning("Please detect internal transfers first")
                     else:
+                        # Reset cancel flag
+                        st.session_state.cancel_classification = False
+                        
                         with st.spinner(f"Classifying transactions in batches of {batch_size}..."):
                             classified_df = classify_transactions(
                                 st.session_state.processed_data,
@@ -925,7 +1051,10 @@ def main():
                             )
                             st.session_state.processed_data = classified_df
                         
-                        st.success("Classification complete!")
+                        if st.session_state.get('cancel_classification', False):
+                            st.warning("Classification cancelled by user")
+                        else:
+                            st.success("Classification complete!")
                 
                 # Show processed data
                 if st.session_state.processed_data is not None:
@@ -943,10 +1072,11 @@ def main():
                     # Export button
                     st.subheader("Export")
                     
-                    csv = st.session_state.processed_data.to_csv(index=False)
+                    # Export with UTF-8 BOM for Excel compatibility
+                    csv = '\ufeff' + st.session_state.processed_data.to_csv(index=False, encoding='utf-8')
                     st.download_button(
                         label="📥 Download Unified CSV",
-                        data=csv,
+                        data=csv.encode('utf-8'),
                         file_name=f"transactions_unified_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                         mime="text/csv"
                     )
