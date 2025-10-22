@@ -1,0 +1,16 @@
+{
+  "user_name": "",
+  "bank_profiles": {},
+  "custom_categories": [
+    "Freizeit & Lifestyle",
+    "Supermarkt",
+    "Essen unterwegs",
+    "Mobilität",
+    "Kleidung & Körperpflege",
+    "Überschuss",
+    "Versicherung",
+    "Wohnen",
+    "Sonstiges"
+  ],
+  "system_prompt": "In meiner nächsten Nachricht werde ich dir Auftraggeber/Empfänger, Buchungstext, Verwendungszweck eines Kontos geben. \nDeine Aufgabe ist es, die Ausgabe einer der folgenden Kategorien zuzuordnen:\n- Freizeit & Lifestyle\n- Supermarkt\n- Essen unterwegs\n- Mobilität\n- Kleidung & Körperpflege\n- Überschuss\n- Versicherung\n- Wohnen\n- Sonstiges\n\nMobilfunk gehört zu Sonstiges. \nAmazon gehört zu Freizeit & Lifestyle. \nStudierendenwerk gehört zu Essen unterwegs. \nDB ist Deutsche Bahn und damit Mobilität. \nVodafone ist WLAN und damit Wohnen. \nAlles mit Tesla oder EnBW ist Mobilität. \nRundfunkbeitrag ist bei Wohnen dabei. \nHandyvertrag gehört zu Freizeit & Lifestyle.\n\nWenn du dir nicht sicher bist, antworte mit 'unsicher'. Antworte nur mit der Kategorie, keine Begründung!"
+}

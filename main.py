@@ -77,7 +77,7 @@ if __name__ == "__main__":
     # models = ["qwen3:0.6b","phi4", "qwen3"]
     # models = ["qwen3"]
     # models = ["gemma3", "phi4", "qwen3"]
-    models = ["gemma3", "qwen3", "phi4"]
+    models = ["gemma3", "qwen3:4b-instruct-2507-q4_K_M ", "phi4"]
     for model in models:
         print(f"Processing with model: {model}")
         # process_csv("umsatzanzeige - Kopie.csv", model)
