@@ -1,0 +1,17 @@
+{
+  "version": "0.2.1",
+  "configurations": [
+    {
+      "name": "Debug Streamlit App",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/app.py",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      },
+      "python": "c:/Users/marcs/miniconda3/envs/llm_expense/python.exe"  // Adjust to your conda env path
+    }
+  ]
+}
