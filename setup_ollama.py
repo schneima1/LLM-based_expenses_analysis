@@ -71,23 +71,34 @@ def parse_models(ollama_list_output):
 
 def check_models(model_list_output):
     """Check which recommended models are installed."""
-    recommended_model = 'qwen3:4b-instruct-2507-q4_K_M'
+    recommended_llm = 'gemma4:e4b'
+    recommended_emb = 'nomic-embed-text-v2-moe'
     
     installed_models = parse_models(model_list_output)
     
-    print("\nChecking recommended model...")
+    print("\nChecking recommended models...")
     print(f"Installed models: {', '.join(installed_models) if installed_models else 'None'}")
     print()
     
-    # Check if the recommended model is installed
-    is_installed = any(recommended_model in installed or 'qwen3' in installed.lower() for installed in installed_models)
+    # Check if the recommended models are installed
+    llm_installed = any(recommended_llm in installed for installed in installed_models)
+    emb_installed = any(recommended_emb in installed for installed in installed_models)
     
-    if is_installed:
-        print(f"✅ {recommended_model} (or qwen3 variant) - Installed")
-        return [recommended_model]
+    missing_models = []
+    
+    if llm_installed:
+        print(f"✅ {recommended_llm} - Installed")
     else:
-        print(f"⚪ {recommended_model} - Not installed")
-        return []
+        print(f"⚪ {recommended_llm} - Not installed")
+        missing_models.append(recommended_llm)
+        
+    if emb_installed:
+        print(f"✅ {recommended_emb} - Installed")
+    else:
+        print(f"⚪ {recommended_emb} - Not installed")
+        missing_models.append(recommended_emb)
+        
+    return missing_models
 
 def pull_model(model_name):
     """Pull a model from Ollama."""
@@ -122,44 +133,41 @@ def main():
         sys.exit(1)
     
     # Check models
-    found_models = check_models(models_output)
+    missing_models = check_models(models_output)
     
-    # Recommend model if none found
-    if not found_models:
+    # Recommend models if none found
+    if missing_models:
         print()
-        print("⚠️  Recommended model not found.")
+        print(f"⚠️  Missing recommended models: {', '.join(missing_models)}")
         print()
-        print("The app needs the qwen3:4b-instruct-2507-q4_K_M model to work.")
+        print("The app works best with these models.")
         print()
         
-        response = input("Would you like to pull qwen3:4b-instruct-2507-q4_K_M now? (y/n): ").lower().strip()
-        
-        if response == 'y':
-            if pull_model('qwen3:4b-instruct-2507-q4_K_M'):
-                print()
-                print("✅ Setup complete! You can now use the app.")
+        for model in missing_models:
+            response = input(f"Would you like to pull {model} now? (y/n): ").lower().strip()
+            
+            if response == 'y':
+                if pull_model(model):
+                    print(f"✅ Successfully pulled {model}")
+                else:
+                    print(f"❌ Failed to pull {model}. Please try manually: ollama pull {model}")
             else:
-                print()
-                print("❌ Setup failed. Please try manually:")
-                print("   ollama pull qwen3:4b-instruct-2507-q4_K_M")
-        else:
-            print()
-            print("To pull the model manually, run:")
-            print("   ollama pull qwen3:4b-instruct-2507-q4_K_M")
+                print(f"To pull {model} manually, run: ollama pull {model}")
     else:
         print()
-        print(f"✅ You have the recommended model installed.")
+        print(f"✅ You have all recommended models installed.")
         print("You're ready to use the app!")
     
     print()
     print("=" * 60)
     print("Model Information:")
     print("-" * 60)
-    print("• qwen3:4b-instruct-2507-q4_K_M - Required for the app")
-    print("  Fast, accurate, optimized for German text")
+    print("• gemma4:e4b - Recommended for LLM classification")
+    print("• nomic-embed-text-v2-moe - Recommended for Embedding classification")
     print()
-    print("To pull the model:")
-    print("   ollama pull qwen3:4b-instruct-2507-q4_K_M")
+    print("To pull models manually:")
+    print("   ollama pull gemma4:e4b")
+    print("   ollama pull nomic-embed-text-v2-moe")
     print()
     print("To see all available models:")
     print("   Visit: https://ollama.com/library")
