@@ -5,12 +5,18 @@ from classifiers import EmbeddingClassifier
 CSV_FILE = "umsatzanzeige medium copy.csv"
 
 def main():
-    if not os.path.exists(CSV_FILE):
-        print(f"File not found: {CSV_FILE}")
+    import argparse
+    parser = argparse.ArgumentParser(description="Classify transactions using embeddings.")
+    parser.add_argument("--file", type=str, default=CSV_FILE, help="Path to the CSV file to use.")
+    args = parser.parse_args()
+
+    file_to_use = args.file
+    if not os.path.exists(file_to_use):
+        print(f"File not found: {file_to_use}")
         return
 
-    print(f"Loading data from {CSV_FILE}...")
-    df = pd.read_csv(CSV_FILE, sep=';', encoding='utf-8')
+    print(f"Loading data from {file_to_use}...")
+    df = pd.read_csv(file_to_use, sep=';', encoding='utf-8')
     
     # Map raw data to classifier columns
     df['Account'] = df.iloc[:, 2]

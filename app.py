@@ -22,7 +22,7 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional
+from typing import Any, List, Dict, Tuple, Optional
 import tempfile
 import ollama
 import plotly.graph_objects as go
@@ -47,10 +47,6 @@ except ImportError:
 # CONFIGURATION & CONSTANTS
 # ============================================================================
 
-DEFAULT_CATEGORY_KEYWORDS = TransactionClassifier.DEFAULT_EXPENSE_CATEGORIES
-
-DEFAULT_INCOME_KEYWORDS = TransactionClassifier.DEFAULT_INCOME_CATEGORIES
-
 SYSTEM_PROMPT = """Du bist ein Finanz-Experte. Deine Aufgabe ist es, Bank-Transaktionen präzise Kategorien zuzuweisen. 
 Basierend auf dem Betrag ist bereits vorentschieden, ob es eine Ausgabe oder Einnahme ist.
 Antworte immer nur mit dem Namen der Kategorie, ohne zusätzliche Erklärung oder Floskeln."""
@@ -60,9 +56,9 @@ CONFIG_FILE = "config.json"
 # Common column name variations for auto-detection
 COLUMN_MAPPINGS = {
     'date': ['datum', 'date', 'buchung', 'valuta', 'buchungstag', 'wertstellung', 'transaction date', 'transactiondate'],
-    'description': ['beschreibung', 'description', 'verwendungszweck', 'buchungstext', 'text', 'details', 'transaction details', 'purpose'],
+    'description': ['verwendungszweck', 'buchungstext', 'beschreibung', 'description', 'text', 'details', 'transaction details', 'purpose'],
     'amount': ['betrag', 'amount', 'wert', 'value', 'sum', 'summe'],
-    'account': ['auftraggeber', 'empfänger', 'empfaenger', 'auftraggeber/empfänger', 'auftraggeber/empfaenger', 'auftraggeber/empfnger', 'account', 'recipient', 'payee', 'payer', 'name'],
+    'account': ['begünstigter', 'zahlungsempfänger', 'auftraggeber', 'empfänger', 'empfaenger', 'auftraggeber/empfänger', 'auftraggeber/empfaenger', 'auftraggeber/empfnger', 'account', 'recipient', 'payee', 'payer', 'name'],
     'currency': ['währung', 'waehrung', 'whrung', 'currency', 'whrun', 'eur', 'usd']
 }
 
@@ -82,8 +78,8 @@ def load_config() -> Dict:
     return {
         'user_name': '',
         'bank_profiles': {},
-        'custom_categories': list(DEFAULT_CATEGORY_KEYWORDS.keys()),
-        'income_categories': list(DEFAULT_INCOME_KEYWORDS.keys()),
+        'category_keywords': TransactionClassifier.DEFAULT_EXPENSE_CATEGORIES.copy(),
+        'income_keywords': TransactionClassifier.DEFAULT_INCOME_CATEGORIES.copy(),
         'system_prompt': SYSTEM_PROMPT
     }
 
@@ -192,11 +188,11 @@ def normalize_column_name(col: str) -> str:
     return col.lower().strip().replace(' ', '').replace('_', '')
 
 
-def auto_detect_columns(df: pd.DataFrame) -> Dict[str, Optional[str]]:
+def auto_detect_columns(df: pd.DataFrame) -> Dict[str, Any]:
     """Automatically detect standard columns in DataFrame."""
     detected = {
         'date': None,
-        'description': None,
+        'description': [],
         'amount': None,
         'account': None,
         'currency': None
@@ -210,13 +206,27 @@ def auto_detect_columns(df: pd.DataFrame) -> Dict[str, Optional[str]]:
         if norm not in normalized_cols:  # Only keep first occurrence
             normalized_cols[norm] = col
     
+    description_matches = []
+
     # Try to match each field
     for field, variations in COLUMN_MAPPINGS.items():
         for variation in variations:
             norm_var = normalize_column_name(variation)
             if norm_var in normalized_cols:
-                detected[field] = normalized_cols[norm_var]
-                break
+                matched_col = normalized_cols[norm_var]
+                if field == 'description':
+                    if matched_col not in description_matches:
+                        description_matches.append(matched_col)
+                else:
+                    detected[field] = matched_col
+                    break
+
+    if description_matches:
+        description_col_order = {col: idx for idx, col in enumerate(df.columns)}
+        detected['description'] = sorted(
+            description_matches,
+            key=lambda col: description_col_order.get(col, len(description_col_order))
+        )
     
     return detected
 
@@ -254,18 +264,21 @@ def clean_amount(amount_str: str) -> float:
     # Convert to string and clean
     amount_str = str(amount_str).strip()
     
-    # Remove currency symbols
-    amount_str = re.sub(r'[€$£¥]', '', amount_str)
+    # Remove currency symbols and common separators
+    amount_str = re.sub(r'[€$£¥\s]', '', amount_str)
     
-    # Handle European format (1.234,56)
-    if ',' in amount_str and '.' in amount_str:
-        # European format
-        amount_str = amount_str.replace('.', '').replace(',', '.')
-    elif ',' in amount_str:
-        # Might be European decimal separator
-        amount_str = amount_str.replace(',', '.')
+    # Check if we have the German/European format with thousand separator (1.234,56)
+    # or the simple format with decimal comma (1234,56)
+    if ',' in amount_str:
+        if '.' in amount_str:
+            # European format: Remove dots (thousands), replace comma with dot (decimal)
+            amount_str = amount_str.replace('.', '').replace(',', '.')
+        else:
+            # Only a comma: treat as decimal separator
+            amount_str = amount_str.replace(',', '.')
     
     # Remove any remaining non-numeric except . and -
+    # Important: Keep the first minus but remove others if they are corruptions
     amount_str = re.sub(r'[^\d.-]', '', amount_str)
     
     try:
@@ -589,7 +602,7 @@ def load_csv_file(file) -> pd.DataFrame:
     df.columns = new_columns
     
     # Fix string columns
-    for col in df.select_dtypes(include=['object']).columns:
+    for col in df.select_dtypes(include=['object', 'string']).columns:
         df[col] = df[col].apply(lambda x: apply_corruption_fixes(str(x), corruption_fixes) if pd.notna(x) else x)
     
     # Store encoding info as metadata
@@ -607,13 +620,13 @@ def apply_corruption_fixes(text: str, fixes: Dict[str, str]) -> str:
     return text
 
 
-def normalize_dataframe(df: pd.DataFrame, column_mapping: Dict[str, str], source_file: str) -> pd.DataFrame:
+def normalize_dataframe(df: pd.DataFrame, column_mapping: Dict[str, Any], source_file: str) -> pd.DataFrame:
     """
     Normalize DataFrame to standard format.
     
     Args:
         df: Input DataFrame
-        column_mapping: Dict mapping standard fields to actual column names
+        column_mapping: Dict mapping standard fields to actual column name(s)
         source_file: Name of source file
     
     Returns:
@@ -627,9 +640,14 @@ def normalize_dataframe(df: pd.DataFrame, column_mapping: Dict[str, str], source
     else:
         normalized['Date'] = None
     
-    # Map description
+    # Map description (can be a list of columns)
     if column_mapping.get('description'):
-        normalized['Description'] = df[column_mapping['description']].astype(str)
+        desc_cols = column_mapping['description']
+        if isinstance(desc_cols, list):
+            # Combine multiple columns with a space
+            normalized['Description'] = df[desc_cols].fillna('').astype(str).agg(' '.join, axis=1).str.strip()
+        else:
+            normalized['Description'] = df[desc_cols].fillna('').astype(str)
     else:
         normalized['Description'] = ''
     
@@ -641,9 +659,13 @@ def normalize_dataframe(df: pd.DataFrame, column_mapping: Dict[str, str], source
     
     # Map account/recipient
     if column_mapping.get('account'):
-        normalized['Account'] = df[column_mapping['account']].astype(str)
+        normalized['Account'] = df[column_mapping['account']].fillna('Unknown').astype(str)
     else:
         normalized['Account'] = 'Unknown'
+    
+    # Ensure Account and Description are used for logic (e.g. embedding classifier needs both)
+    # The Embedding classifier expects 'Account' + 'Description'
+    # We maintain these as separate columns but ensure they are correctly populated
     
     # Map currency
     if column_mapping.get('currency'):
@@ -675,7 +697,9 @@ def detect_internal_transfers(df: pd.DataFrame, user_name: str = '', tolerance: 
        (within tolerance) and dates are close -> internal transfer
     3. Exclude investment transactions (WP-, Wertpapier, ETF, etc.)
     """
-    df = df.copy()
+    # Ensure Account and Description are used for logic
+    df['Account'] = df['Account'].fillna('Unknown').astype(str)
+    df['Description'] = df['Description'].fillna('').astype(str)
     
     # Exclude investment-related transactions from internal transfer detection
     investment_keywords = ['WP-', 'Wertpapier', 'ETF', 'ISIN', 'Kauf', 'Verkauf', 'Dividende', 'Zins']
@@ -958,14 +982,14 @@ def main():
             
             with col1:
                 st.markdown("#### Windows")
-                if st.button("📥 Download for Windows", use_container_width=True):
-                    st.link_button("Go to Download", "https://ollama.com/download/windows", use_container_width=True)
+                if st.button("📥 Download for Windows", width="stretch"):
+                    st.link_button("Go to Download", "https://ollama.com/download/windows", width="stretch")
                 st.caption("Download and run the installer")
             
             with col2:
                 st.markdown("#### macOS")
-                if st.button("📥 Download for macOS", use_container_width=True):
-                    st.link_button("Go to Download", "https://ollama.com/download/mac", use_container_width=True)
+                if st.button("📥 Download for macOS", width="stretch"):
+                    st.link_button("Go to Download", "https://ollama.com/download/mac", width="stretch")
                 st.caption("Download and open the DMG")
             
             with col3:
@@ -1073,7 +1097,7 @@ def main():
             st.info("Edit keywords for similarity matching (comma-separated)")
             
             # Using a simplified approach for the UI
-            cat_keywords = st.session_state.config.get('category_keywords', DEFAULT_CATEGORY_KEYWORDS)
+            cat_keywords = st.session_state.config.get('category_keywords', TransactionClassifier.DEFAULT_EXPENSE_CATEGORIES)
             
             for cat in list(cat_keywords.keys()):
                 cat_keywords[cat] = st.text_input(cat, value=cat_keywords[cat], key=f"cat_kw_{cat}")
@@ -1081,7 +1105,7 @@ def main():
             st.session_state.config['category_keywords'] = cat_keywords
 
             st.subheader("Income Keywords")
-            income_keywords = st.session_state.config.get('income_keywords', DEFAULT_INCOME_KEYWORDS)
+            income_keywords = st.session_state.config.get('income_keywords', TransactionClassifier.DEFAULT_INCOME_CATEGORIES)
 
             for cat in list(income_keywords.keys()):
                 income_keywords[cat] = st.text_input(cat, value=income_keywords[cat], key=f"inc_kw_{cat}")
@@ -1164,18 +1188,12 @@ def main():
                             key=f"date_{file.name}"
                         )
                         
-                        desc_col = st.selectbox(
-                            "Description Column",
-                            options=[''] + list(df.columns),
-                            index=list([''] + list(df.columns)).index(detected['description']) if detected['description'] else 0,
-                            key=f"desc_{file.name}"
-                        )
-                        
-                        amount_col = st.selectbox(
-                            "Amount Column",
-                            options=[''] + list(df.columns),
-                            index=list([''] + list(df.columns)).index(detected['amount']) if detected['amount'] else 0,
-                            key=f"amount_{file.name}"
+                        desc_col = st.multiselect(
+                            "Description Column(s)",
+                            options=list(df.columns),
+                            default=detected['description'],
+                            key=f"desc_{file.name}",
+                            help="Select one or more columns to combine for the transaction description (e.g. 'Buchungstext' and 'Verwendungszweck')"
                         )
                     
                     with col2:
@@ -1192,7 +1210,14 @@ def main():
                             index=list([''] + list(df.columns)).index(detected['currency']) if detected['currency'] else 0,
                             key=f"currency_{file.name}"
                         )
-                    
+
+                    amount_col = st.selectbox(
+                        "Amount Column",
+                        options=[''] + list(df.columns),
+                        index=list([''] + list(df.columns)).index(detected['amount']) if detected['amount'] else 0,
+                        key=f"amount_{file.name}"
+                    )
+                
                     # Normalize
                     column_mapping = {
                         'date': date_col if date_col else None,
@@ -1215,8 +1240,11 @@ def main():
                 st.header("Merged Data")
                 merged_df = pd.concat(all_dataframes, ignore_index=True)
                 
+                # Use standard column names in display
+                display_df = merged_df.copy()
+                
                 st.write(f"**Total transactions:** {len(merged_df)}")
-                st.dataframe(merged_df)
+                st.dataframe(display_df)
                 
                 # Detect internal transfers
                 col1, col2 = st.columns([3, 1])
@@ -1282,6 +1310,8 @@ def main():
                 # Classify transactions
                 st.header("Transaction Classification")
                 
+                debug_mode = st.checkbox("Enable Debug Logs (Terminal)", value=False, help="Prints detailed classification decisions to the console.")
+                
                 col1, col2, col3 = st.columns([2, 2, 1])
                 
                 with col1:
@@ -1294,10 +1324,10 @@ def main():
                     )
                 
                 with col2:
-                    classify_button = st.button("🤖 Classify with Ollama", use_container_width=True)
+                    classify_button = st.button("🤖 Classify with Ollama", width="stretch")
                 
                 with col3:
-                    if st.button("❌ Cancel", use_container_width=True):
+                    if st.button("❌ Cancel", width="stretch"):
                         st.session_state.cancel_classification = True
                         st.warning("Cancelling...")
                 
@@ -1313,38 +1343,41 @@ def main():
                         use_flm = st.session_state.config.get('use_flm', False)
                         base_url = st.session_state.config.get('flm_url', "http://127.0.0.1:52625/v1") if use_flm else None
 
+                        # Get model names from config
+                        llm_model = st.session_state.config.get('llm_model', 'gemma4:e4b')
+                        embedding_model = st.session_state.config.get('embedding_model', 'nomic-embed-text-v2-moe')
+
                         with st.spinner(f"Classifying transactions using {method}..."):
-                            # Prepare keywords
-                            expense_kws = st.session_state.config.get('category_keywords', DEFAULT_CATEGORY_KEYWORDS)
-                            income_kws = st.session_state.config.get('income_keywords', DEFAULT_INCOME_KEYWORDS)
+                            # Prepare keywords from config or fall back to classifier defaults
+                            expense_kws = st.session_state.config.get('category_keywords', TransactionClassifier.DEFAULT_EXPENSE_CATEGORIES)
+                            income_kws = st.session_state.config.get('income_keywords', TransactionClassifier.DEFAULT_INCOME_CATEGORIES)
                             
                             if method == 'LLM':
                                 classifier = LLMClassifier(
-                                    categories=expense_kws,
+                                    expense_categories=expense_kws,
                                     income_categories=income_kws,
                                     system_prompt=st.session_state.config.get('system_prompt', SYSTEM_PROMPT),
-                                    model_name=st.session_state.config.get('llm_model', 'gemma4:e4b'),
+                                    model_name=llm_model,
                                     base_url=base_url
                                 )
-                                classified_df = classifier.classify(
+                                st.session_state.processed_data = classifier.classify(
                                     st.session_state.processed_data,
                                     batch_size=batch_size,
-                                    exclude_internal=exclude_internal
+                                    exclude_internal=exclude_internal,
+                                    debug=debug_mode
                                 )
                             else:
                                 classifier = EmbeddingClassifier(
-                                    categories=expense_kws,
+                                    expense_categories=expense_kws,
                                     income_categories=income_kws,
-                                    model_name=st.session_state.config.get('embedding_model', 'nomic-embed-text-v2-moe'),
+                                    model_name=embedding_model,
                                     base_url=base_url
                                 )
-                                # Embedding classifier doesn't use batch size the same way, but it's okay
-                                classified_df = classifier.classify(
+                                st.session_state.processed_data = classifier.classify(
                                     st.session_state.processed_data,
-                                    exclude_internal=exclude_internal
+                                    exclude_internal=exclude_internal,
+                                    debug=debug_mode
                                 )
-                            
-                            st.session_state.processed_data = classified_df
                         
                         if st.session_state.get('cancel_classification', False):
                             st.warning("Classification cancelled by user")
@@ -1488,7 +1521,7 @@ def main():
                             'margin': {'t': 20, 'b': 20, 'l': 20, 'r': 20}
                         }
                     }
-                    st.plotly_chart(fig_income, use_container_width=True)
+                    st.plotly_chart(fig_income, width="stretch")
                 else:
                     st.info("No income transactions found")
             
@@ -1513,7 +1546,7 @@ def main():
                             'margin': {'t': 20, 'b': 20, 'l': 20, 'r': 20}
                         }
                     }
-                    st.plotly_chart(fig_expense, use_container_width=True)
+                    st.plotly_chart(fig_expense, width="stretch")
                 else:
                     st.info("No expense transactions found")
             
@@ -1522,27 +1555,51 @@ def main():
             st.markdown("*Visualizes how money flows from sources (accounts) to categories*")
             
             if not analysis_df.empty:
-                # Prepare data for Sankey
-                # Sources are accounts/recipients, targets are categories
-                sankey_df = analysis_df[['Account', 'Category', 'Amount']].copy()
-                sankey_df['Amount'] = abs(sankey_df['Amount'])
+                # Prepare data for Sankey: Account -> Wallet -> Category
+                # Incomes: Account (Sender) -> Wallet
+                # Expenses: Wallet -> Category (Receiver)
                 
-                # Group by source and target
-                flow_data = sankey_df.groupby(['Account', 'Category'])['Amount'].sum().reset_index()
-                flow_data = flow_data[flow_data['Amount'] > 0].sort_values('Amount', ascending=False).head(50)  # Top 50 flows
+                income_df = analysis_df[analysis_df['Amount'] > 0].copy()
+                expense_df = analysis_df[analysis_df['Amount'] < 0].copy()
+                
+                wallet_node = "My Wallet"
+                
+                # Flows from Income Accounts to Wallet
+                income_flows = income_df.groupby('Account')['Amount'].sum().reset_index()
+                income_flows['Target'] = wallet_node
+                income_flows = income_flows[['Account', 'Target', 'Amount']]
+                income_flows.columns = ['Source', 'Target', 'Value']
+                
+                # Flows from Wallet to Expense Categories
+                expense_flows = expense_df.copy()
+                expense_flows['Amount'] = abs(expense_flows['Amount'])
+                expense_flows = expense_flows.groupby('Category')['Amount'].sum().reset_index()
+                expense_flows['Source'] = wallet_node
+                expense_flows = expense_flows[['Source', 'Category', 'Amount']]
+                expense_flows.columns = ['Source', 'Target', 'Value']
+                
+                # Combine flows
+                flow_data = pd.concat([income_flows, expense_flows], ignore_index=True)
+                flow_data = flow_data[flow_data['Value'] > 0].sort_values('Value', ascending=False)
                 
                 if not flow_data.empty:
                     # Create unique labels
-                    sources = flow_data['Account'].unique().tolist()
-                    targets = flow_data['Category'].unique().tolist()
-                    all_labels = sources + targets
+                    all_labels = sorted(list(set(flow_data['Source'].tolist() + flow_data['Target'].tolist())))
                     
                     # Map to indices
                     label_to_index = {label: idx for idx, label in enumerate(all_labels)}
                     
-                    source_indices = [label_to_index[src] for src in flow_data['Account']]
-                    target_indices = [label_to_index[tgt] for tgt in flow_data['Category']]
-                    values = flow_data['Amount'].tolist()
+                    source_indices = [label_to_index[src] for src in flow_data['Source']]
+                    target_indices = [label_to_index[tgt] for tgt in flow_data['Target']]
+                    values = flow_data['Value'].tolist()
+                    
+                    # Colors for nodes
+                    def get_node_color(label):
+                        if label == wallet_node: return '#f1c40f' # Gold for wallet
+                        if label in income_flows['Source'].values: return '#2ecc71' # Green for income sources
+                        return '#e74c3c' # Red for expense categories
+                    
+                    node_colors = [get_node_color(label) for label in all_labels]
                     
                     # Create Sankey
                     fig_sankey = {
@@ -1550,24 +1607,24 @@ def main():
                             'type': 'sankey',
                             'node': {
                                 'label': all_labels,
-                                'color': ['#3498db'] * len(sources) + ['#e74c3c'] * len(targets),
-                                'pad': 15,
-                                'thickness': 20
+                                'color': node_colors,
+                                'pad': 20,
+                                'thickness': 30
                             },
                             'link': {
                                 'source': source_indices,
                                 'target': target_indices,
                                 'value': values,
-                                'color': 'rgba(0,0,0,0.2)'
+                                'color': 'rgba(0,0,0,0.1)'
                             }
                         }],
                         'layout': {
-                            'height': 600,
-                            'font': {'size': 10},
-                            'margin': {'t': 20, 'b': 20, 'l': 20, 'r': 20}
+                            'height': 700,
+                            'font': {'size': 12},
+                            'margin': {'t': 40, 'b': 40, 'l': 20, 'r': 20}
                         }
                     }
-                    st.plotly_chart(fig_sankey, use_container_width=True)
+                    st.plotly_chart(fig_sankey, width="stretch")
                 else:
                     st.info("Not enough data for Sankey diagram")
             
@@ -1594,11 +1651,19 @@ def main():
             if 'Date' in analysis_df.columns:
                 timeline_df = analysis_df.copy()
                 timeline_df['Date'] = pd.to_datetime(timeline_df['Date'])
-                timeline_df = timeline_df.dropna(subset=['Date'])
+                timeline_df = timeline_df.dropna(subset=['Date', 'Amount'])
                 
                 if not timeline_df.empty:
-                    timeline_df = timeline_df.set_index('Date').resample('D')['Amount'].sum().reset_index()
-                    st.line_chart(timeline_df.set_index('Date'))
+                    # Filter for non-zero transactions to avoid infinite extents in charts
+                    timeline_df = timeline_df[timeline_df['Amount'] != 0]
+                    
+                    if not timeline_df.empty:
+                        timeline_df = timeline_df.set_index('Date').resample('D')['Amount'].sum().reset_index()
+                        st.line_chart(timeline_df.set_index('Date'))
+                    else:
+                        st.info("No transaction amounts to display in timeline")
+                else:
+                    st.info("No valid dates found in transactions")
         
         else:
             st.info("Upload and process files in the 'Upload & Process' tab first")

@@ -12,5 +12,28 @@
     "Wohnen",
     "Sonstiges"
   ],
-  "system_prompt": "In meiner nächsten Nachricht werde ich dir Auftraggeber/Empfänger, Buchungstext, Verwendungszweck eines Kontos geben. \nDeine Aufgabe ist es, die Ausgabe einer der folgenden Kategorien zuzuordnen:\n- Freizeit & Lifestyle\n- Supermarkt\n- Essen unterwegs\n- Mobilität\n- Kleidung & Körperpflege\n- Überschuss\n- Versicherung\n- Wohnen\n- Sonstiges\n\nMobilfunk gehört zu Sonstiges. \nAmazon gehört zu Freizeit & Lifestyle. \nStudierendenwerk gehört zu Essen unterwegs. \nDB ist Deutsche Bahn und damit Mobilität. \nVodafone ist WLAN und damit Wohnen. \nAlles mit Tesla oder EnBW ist Mobilität. \nRundfunkbeitrag ist bei Wohnen dabei. \nHandyvertrag gehört zu Freizeit & Lifestyle.\n\nWenn du dir nicht sicher bist, antworte mit 'unsicher'. Antworte nur mit der Kategorie, keine Begründung!"
+  "system_prompt": "In meiner nächsten Nachricht werde ich dir Auftraggeber/Empfänger, Buchungstext, Verwendungszweck eines Kontos geben. \nDeine Aufgabe ist es, die Ausgabe einer der folgenden Kategorien zuzuordnen:\n- Freizeit & Lifestyle\n- Supermarkt\n- Essen unterwegs\n- Mobilität\n- Kleidung & Körperpflege\n- Überschuss\n- Versicherung\n- Wohnen\n- Sonstiges\n\nMobilfunk gehört zu Sonstiges. \nAmazon gehört zu Freizeit & Lifestyle. \nStudierendenwerk gehört zu Essen unterwegs. \nDB ist Deutsche Bahn und damit Mobilität. \nVodafone ist WLAN und damit Wohnen. \nAlles mit Tesla oder EnBW ist Mobilität. \nRundfunkbeitrag ist bei Wohnen dabei. \nHandyvertrag gehört zu Freizeit & Lifestyle.\n\nWenn du dir nicht sicher bist, antworte mit 'unsicher'. Antworte nur mit der Kategorie, keine Begründung!",
+  "classification_method": "Embedding",
+  "use_flm": false,
+  "embedding_model": "nomic-embed-text-v2-moe",
+  "category_keywords": {
+    "Wohnen": "Miete, Strom, Internet, Heizung, Nebenkosten, Vodafone, immergruen, Rundfunkbeitrag",
+    "Mobilität": "Bahn, Auto, Tankstelle, Bus, Flug, DB, Tesla, EnBW",
+    "Essen unterwegs": "Restaurant, Lieferdienst, Fast Food, Döner, Pizza",
+    "Essen daheim": "Supermarkt, Lebensmittel, REWE, Aldi, Lidl, Edeka",
+    "Investments": "ETF, Aktie, Trade Republic, Depot, Kryptowährung, Sparplan",
+    "Freizeit & Lifestyle": "Kino, Konzert, Reisen, Sport, Amazon, Handy, Mobilfunk, Lebara, sim.de",
+    "Urlaub": "Reise, Hotel, Flug, Mietwagen, booking, airbnb",
+    "Versicherungen": "Lebensversicherung, Hausratversicherung, Kfz-Versicherung, Allianz, Getsafe, Itzehoer",
+    "Kleidung & Körperpflege": "Friseur, Kosmetik, Mode, Klamotten, Fashion, Zara, H&M",
+    "Sonstige": "divers, unbekannt"
+  },
+  "income_keywords": {
+    "Gehalt": "Lohn, Gehalt, Bezüge",
+    "Mieteinnahmen": "Miete, Mieteingang",
+    "Dividende": "Dividende, Ausschüttung",
+    "Zinsen": "Zinsen, Zinsertrag",
+    "Schenkungen": "Geschenk, Schenkung",
+    "Sonstige": "Sonstige, diverse, Gutschrift"
+  }
 }

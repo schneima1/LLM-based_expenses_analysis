@@ -89,7 +89,7 @@ class EmbeddingClassifier(TransactionClassifier):
     def _cosine_similarity(self, a, b):
         return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
-    def classify(self, df: pd.DataFrame, exclude_internal: bool = True, **kwargs) -> pd.DataFrame:
+    def classify(self, df: pd.DataFrame, exclude_internal: bool = True, debug: bool = False, **kwargs) -> pd.DataFrame:
         results = []
         for index, row in df.iterrows():
             if exclude_internal and row.get('Internal_Transfer', False):
@@ -107,6 +107,9 @@ class EmbeddingClassifier(TransactionClassifier):
             description = str(row.get('Description', ''))
             text = f"{empfaenger} {description}".strip()
             
+            if debug:
+                print(f"[DEBUG] Row {index}: Amount={amount}, Text='{text}'")
+
             if not text:
                 results.append("Sonstige")
                 continue
@@ -117,7 +120,11 @@ class EmbeddingClassifier(TransactionClassifier):
                 continue
 
             # Determine whether to use Income or Expense embeddings
-            current_embeddings = self.income_category_embeddings if amount > 0 else self.category_embeddings
+            is_income = amount > 0
+            current_embeddings = self.income_category_embeddings if is_income else self.category_embeddings
+            
+            if debug:
+                print(f"[DEBUG] -> Using {'INCOME' if is_income else 'EXPENSE'} categories")
             
             best_cat = "Sonstige"
             max_sim = -1.0
@@ -129,6 +136,9 @@ class EmbeddingClassifier(TransactionClassifier):
                         max_sim = sim
                         best_cat = cat_name
             
+            if debug:
+                print(f"[DEBUG] -> Best Match: {best_cat} (Sim: {max_sim:.4f})")
+            
             results.append(best_cat)
         
         df['Category'] = results
@@ -139,7 +149,7 @@ class LLMClassifier(TransactionClassifier):
         super().__init__(expense_categories, income_categories, model_name, base_url)
         self.system_prompt = system_prompt
 
-    def classify(self, df: pd.DataFrame, batch_size: int = 10, exclude_internal: bool = True, **kwargs) -> pd.DataFrame:
+    def classify(self, df: pd.DataFrame, batch_size: int = 10, exclude_internal: bool = True, debug: bool = False, **kwargs) -> pd.DataFrame:
         df = df.copy()
         
         # Determine valid indices for classification
@@ -155,17 +165,22 @@ class LLMClassifier(TransactionClassifier):
         expense_indices = [idx for idx in to_classify_indices if df.at[idx, 'Amount'] < 0]
         income_indices = [idx for idx in to_classify_indices if df.at[idx, 'Amount'] >= 0]
         
+        if debug:
+            print(f"[DEBUG] Total to classify: {len(to_classify_indices)}")
+            print(f"[DEBUG] Expenses detected: {len(expense_indices)}")
+            print(f"[DEBUG] Incomes detected: {len(income_indices)}")
+
         results = {}
         
         # 1. Process Expenses first
         if expense_indices:
             print(f"Processing {len(expense_indices)} expenses...")
-            results.update(self._process_group(df, expense_indices, self.expense_categories, batch_size, is_income=False))
+            results.update(self._process_group(df, expense_indices, self.expense_categories, batch_size, is_income=False, debug=debug))
             
         # 2. Process Incomes second
         if income_indices:
             print(f"Processing {len(income_indices)} incomes...")
-            results.update(self._process_group(df, income_indices, self.income_categories, batch_size, is_income=True))
+            results.update(self._process_group(df, income_indices, self.income_categories, batch_size, is_income=True, debug=debug))
         
         # Assign categories to the dataframe
         for idx in df.index:
@@ -176,7 +191,7 @@ class LLMClassifier(TransactionClassifier):
                 
         return df
 
-    def _process_group(self, df: pd.DataFrame, indices: List[int], allowed_categories: Dict[str, str], batch_size: int, is_income: bool) -> Dict[int, str]:
+    def _process_group(self, df: pd.DataFrame, indices: List[int], allowed_categories: Dict[str, str], batch_size: int, is_income: bool, debug: bool = False) -> Dict[int, str]:
         results = {}
         cat_list_str = ", ".join(allowed_categories.keys())
         
@@ -215,8 +230,16 @@ Antworte NUR mit der Liste der Kategorien im Format:
 2. [Kategorie]
 ..."""
             
+            if debug:
+                print(f"\n[LLM DEBUG] Prompting for batch following:")
+                print(batch_text)
+
             # Call classifier
             cats = self._call_llm(specific_prompt)
+            
+            if debug:
+                print(f"[LLM DEBUG] Raw Result: {cats}")
+
             for j, cat in enumerate(cats):
                 if j < len(batch_idx):
                     results[batch_idx[j]] = cat
