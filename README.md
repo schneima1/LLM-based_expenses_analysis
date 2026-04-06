@@ -38,12 +38,13 @@
 
 ✅ **Works Offline**: All processing happens on your computer  
 ✅ **100% Private**: Your financial data never leaves your PC  
-✅ **AI-Powered**: Uses local LLM (Large Language Model) for smart categorization  
+✅ **AI-Powered**: Uses local LLM or embedding-based classification for smart categorization  
 ✅ **Multi-Bank**: Handles CSVs from any bank, automatically detects formats  
 ✅ **Smart Detection**: Identifies internal transfers between your accounts  
 ✅ **Free & Open Source**: No subscriptions, no hidden costs  
 ✅ **Full Control**: Customize categories and rules to match your needs  
 ✅ **Visual Analytics**: Beautiful charts and graphs to understand your spending  
+✅ **Multiple Classification Methods**: Choose between LLM (intelligent) or embeddings (fast & efficient)
 
 **Use Cases:**
 - 📊 **Personal Finance**: Track spending, identify savings opportunities
@@ -51,6 +52,7 @@
 - 🏦 **Multi-Account Management**: Consolidate data from different banks
 - 📈 **Budget Analysis**: Understand where your money goes each month
 - 🔍 **Financial Audit**: Review all transactions in one unified view
+- ⚡ **Fast Classification**: Use embedding-based method for quick processing of large datasets
 
 ---
 
@@ -58,11 +60,18 @@
 
 ### Quick Setup (10 minutes total)
 
-#### Step 1: Download the Application
+#### Step 1: Download and Extract the Application
 
-**[📥 Download BankTransactionAnalyzer.exe](../../releases/latest)** (~150 MB)
+**Option A: Download Pre-built Executable (if available)**
+- Check the [releases page](https://github.com/schneima1/LLM-based_expenses_analysis/releases) for `BankTransactionAnalyzer.exe`
+- Download and save it to your desktop or Documents folder
+- Double-click to run (no installation needed)
 
-Just download and save it to your desktop or Documents folder.
+**Option B: Run from Source (Always Available)**
+- Download the source code: Click "Code" → "Download ZIP" on GitHub
+- Extract the ZIP file to a folder on your computer
+- Open the folder and double-click `start_app.bat` (Windows) or `start_app.ps1` (PowerShell)
+- The script will check requirements and launch the app
 
 #### Step 2: Install Ollama (One-Time, ~5 minutes)
 
@@ -70,17 +79,26 @@ Ollama is a free program that runs AI models on your computer.
 
 1. **Download Ollama**: Go to [ollama.com/download/windows](https://ollama.com/download/windows)
 2. **Install**: Run the installer (simple, like any Windows program)
-3. **Get AI Model**: 
+3. **Get Models**: 
    - Open Command Prompt: Press `Win + R`, type `cmd`, press Enter
-   - Copy and paste: `ollama pull gemma3:4b`
-   - Press Enter and wait (~3GB download, 3-5 minutes)
+   - **For LLM (Smart):** `ollama pull gemma4:e4b` (recommended, ~9.6GB)
+   - **For Embeddings (Fast):** `ollama pull nomic-embed-text-v2-moe` (~957)
+   - Press Enter and wait a few minutes (depending on your internet speed)
 4. **Done!** Ollama runs automatically in the background
 
-#### Step 3: Run the Application
+#### Step 3: Launch the Application
 
-1. **Double-click** `BankTransactionAnalyzer.exe`
-2. Your browser opens automatically with the app running at `http://localhost:8501`
-3. **Start analyzing!** Upload your bank statements and let AI do the work
+**If using the executable:**
+- Double-click `BankTransactionAnalyzer.exe`
+- Your browser opens automatically at `http://localhost:8501`
+
+**If running from source:**
+- Start the app in one of the following ways:
+   - Double-click `start_app.bat`
+   - or right-click `start_app.ps1` → "Run with PowerShell"
+   - or type `streamlit run app.py` in the terminal
+- The script will check Python and dependencies, then launch the app
+- Your browser opens automatically at `http://localhost:8501`
 
 **Note:** The app automatically checks if Ollama is installed. If not, it shows helpful instructions with download links.
 
@@ -90,21 +108,26 @@ Ollama is a free program that runs AI models on your computer.
 
 ### Every Time You Analyze Transactions:
 
-1. **Launch the app**: Double-click `BankTransactionAnalyzer.exe`
+1. **Launch the app**:
+   - If using executable: Double-click `BankTransactionAnalyzer.exe`
+   - If running from source: Double-click `start_app.bat` (or run `start_app.ps1`)
 2. **Upload files**: Drag & drop your bank CSV files (or click to browse)
 3. **Configure** (optional):
    - Enter your name for internal transfer detection
-   - Select AI model (gemma3:4b recommended)
+   - Select classification method (LLM or Embeddings)
+   - Choose AI model if using LLM (`gemma4:e4b` recommended)
    - Adjust categories if needed
 4. **Detect transfers**: Click **"🔍 Detect Internal Transfers"**
    - Finds money moved between your own accounts
    - Prevents double-counting
-5. **Classify**: Click **"🤖 Classify with Ollama"**
+5. **Classify**: Click **"🤖 Classify Transactions"**
    - AI categorizes all transactions automatically
    - Watch the progress bar
+   - Choose LLM (smart) or Embeddings (fast) method
 6. **Review results**: 
    - See colored charts and graphs
    - Check the categorized transactions
+   - Filter by category, date, or account
 7. **Export**: Click **"📥 Download Unified CSV"**
    - Get all your data in one clean file
    - Compatible with Excel
@@ -115,10 +138,26 @@ Ollama is a free program that runs AI models on your computer.
 ✅ **Multiple files at once** - Upload all your accounts  
 ⚠️ **PDF statements** - Basic support (tables only, not scanned)  
 
+### Classification Methods:
+
+**🤖 LLM Classification (Smart & Accurate)**
+- Uses local Ollama models (recommended: `gemma4:e4b`)
+- Understands context and nuanced descriptions
+- Best for complex or unusual transaction descriptions
+- Slower but allows the user to guide the model via prompt engineering
+
+**🔢 Embedding Classification (Fast & Efficient)**
+- Uses text embeddings (`nomic-embed-text-v2-moe`) to match transactions to categories
+- Much faster (processes hundreds in seconds)
+- Great for large datasets or regular monthly processing
+- Good accuracy for standard transactions
+- Requires the embedding model in Ollama
+
 ### Tips:
 
 💡 **Start small**: Test with one month of data first  
 💡 **Check mappings**: Verify auto-detected columns are correct  
+💡 **Choose method**: Use embeddings for speed, LLM for complex cases  
 💡 **Custom rules**: Edit the system prompt for your specific needs  
 💡 **Save regularly**: Export your results after each session  
 
@@ -131,7 +170,7 @@ Ollama is a free program that runs AI models on your computer.
 - **Multi-File Upload**: Process multiple CSV and PDF files simultaneously
 - **Smart Format Detection**: Automatically detects date formats, delimiters, and column types
 - **Internal Transfer Detection**: Identifies money moved between your own accounts
-- **AI Classification**: Uses local Ollama models (gemma3, qwen3, llama3.2) for categorization
+- **AI Classification**: Uses local Ollama models (gemma4:e4b) for categorization
 - **Rich Visualizations**: 
   - 📊 Income vs Expense pie charts
   - 🔀 Sankey diagrams showing money flow
@@ -145,10 +184,13 @@ Ollama is a free program that runs AI models on your computer.
 - **Streamlit UI**: Modern, responsive web interface
 - **Pandas Processing**: Fast data manipulation and analysis
 - **Ollama Integration**: Local LLM for intelligent classification
+- **Embedding Classification**: Fast vector-based categorization using sentence transformers
 - **PDF Extraction**: Multiple methods (PDFPlumber, PyMuPDF, OCR fallback)
 - **Plotly Visualizations**: Interactive charts and graphs
 - **PyInstaller Support**: Build standalone executables
 - **Configuration Persistence**: Save settings between sessions
+- **Comparison Tool**: Built-in script to compare LLM vs embedding accuracy
+- **Modular Architecture**: Clean separation with abstract classifier base class
 
 ---
 
@@ -159,6 +201,23 @@ Ollama is a free program that runs AI models on your computer.
 - **Open Source**: Full transparency - inspect the code yourself
 - **No Tracking**: No analytics, no telemetry, no data collection
 - **Your Data, Your Control**: All files stay on your computer
+
+---
+
+## 📈 Recent Updates (April 2026)
+
+The project has seen significant improvements recently:
+
+- **✨ Dual Classification Methods**: Added embedding-based classifier as a fast alternative to LLM
+- **🎯 Centralized Categories**: All category definitions now in one base class for consistency
+- **📊 Comparison Tool**: New script to benchmark LLM vs embedding accuracy side-by-side
+- **🤖 Multi-Model Support**: Support for `gemma4:e4b` (LLM) and `nomic-embed-text-v2-moe` (Embeddings)
+- **🔧 Enhanced Transfer Detection**: Improved internal transfer detection with tolerance and date proximity
+- **📄 Better PDF Support**: Multiple extraction methods with automatic fallback
+- **⚡ Performance Optimizations**: Faster processing and better memory management
+- **🐛 Bug Fixes**: Fixed umlaut handling, CSV parsing, and many small issues
+
+See the [CHANGELOG.md](CHANGELOG.md) for the complete list of features and improvements.
 
 ---
 
@@ -182,7 +241,9 @@ cd LLM-based_expenses_analysis
 pip install -r requirements.txt
 
 # Make sure Ollama is running with a model
-ollama pull gemma3:4b
+ollama pull gemma4:e4b # to download the LLM
+ollama pull nomic-embed-text-v2-moe # to download the embedding model
+
 
 # Launch the app
 streamlit run app.py
@@ -195,9 +256,34 @@ The app will open in your browser at `http://localhost:8501`
 Core dependencies (see `requirements.txt` for full list):
 - `streamlit` - Web UI framework
 - `pandas` - Data processing
-- `ollama` - Local LLM integration
+- `ollama` - Local LLM integration (uses `gemma4:e4b` and `nomic-embed-text-v2-moe`)
 - `pdfplumber` - PDF table extraction
 - `PyMuPDF` - Alternative PDF processing
+- `sentence-transformers` - Embedding-based classification (optional)
+- `scikit-learn` - Cosine similarity for embeddings
+
+### Comparing Classification Methods
+
+The project includes a comparison script (`compare_methods.py`) that lets you evaluate both classification approaches side-by-side:
+
+```bash
+python compare_methods.py --file umsatzanzeige.csv --debug
+```
+
+This will:
+- Classify transactions using both LLM and embedding methods
+- Show agreement/disagreement rates
+- Output results to `comparison_results.csv`
+- Help you decide which method works best for your data
+
+**Recent Improvements** (April 2026):
+- Centralized category definitions in `TransactionClassifier` base class
+- Added embedding-based classifier for fast processing
+- Built-in comparison tool to evaluate accuracy
+- Enhanced internal transfer detection with tolerance and date proximity
+- Improved PDF processing with multiple fallback methods
+- Consolidated configuration management
+- Better handling of German umlauts and special characters
 - `plotly` - Interactive visualizations
 
 ### Project Structure
