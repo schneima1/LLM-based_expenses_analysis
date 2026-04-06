@@ -183,17 +183,9 @@ Manual testing performed with:
 - ✅ Single CSV file (German format, semicolon delimiter)
 - ✅ Multiple CSV files from different banks
 - ✅ PDF bank statements
-- ✅ Various date formats
-- ✅ Different amount formats (European vs US)
 - ✅ Internal transfer detection
 - ✅ Classification with multiple Ollama models
 
-### Performance
-
-- Small files (<1000 rows): Instant
-- Medium files (1000-10000 rows): <1 minute
-- Classification speed: ~2-5 transactions/second (depends on model)
-- PDF extraction: 5-10 seconds per page
 
 ---
 
