@@ -82,7 +82,7 @@ Ollama is a free program that runs AI models on your computer.
 3. **Get Models**: 
    - Open Command Prompt: Press `Win + R`, type `cmd`, press Enter
    - **For LLM (Smart):** `ollama pull gemma4:e4b` (recommended, ~9.6GB)
-   - **For Embeddings (Fast):** `ollama pull nomic-embed-text-v2-moe` (~957)
+   - **For Embeddings (Fast):** `ollama pull nomic-embed-text-v2-moe` (~957 MB)
    - Press Enter and wait a few minutes (depending on your internet speed)
 4. **Done!** Ollama runs automatically in the background
 
